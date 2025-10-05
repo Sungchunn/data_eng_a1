@@ -191,17 +191,16 @@ def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tup
         SELECT
             b.business_id,
             b.name,
-            COUNT(DISTINCT r.user_id) AS elite_review_count
+            COUNT(DISTINCT elite_reviews.user_id) AS elite_review_count
         FROM businesses b
-        JOIN reviews r ON b.business_id = r.business_id
+        JOIN (
+            SELECT DISTINCT r.business_id, r.user_id
+            FROM reviews r
+            WHERE r.user_id IN (SELECT DISTINCT user_id FROM user_elite_years)
+        ) elite_reviews ON b.business_id = elite_reviews.business_id
         WHERE b.city = %s
-          AND EXISTS (
-              SELECT 1
-              FROM user_elite_years e
-              WHERE e.user_id = r.user_id
-          )
         GROUP BY b.business_id, b.name
-        HAVING COUNT(DISTINCT r.user_id) >= %s
+        HAVING COUNT(DISTINCT elite_reviews.user_id) >= %s
         ORDER BY elite_review_count DESC
         LIMIT %s
     """, (city, elite_count, top_count))
