@@ -51,6 +51,10 @@ data/
 *.sqlite3
 .db/
 
+# Yelp Dataset (NEVER commit - too large)
+yelp_dataset/
+*.json
+
 # Docker
 .docker/
 
