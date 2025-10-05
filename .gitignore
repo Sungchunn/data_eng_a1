@@ -54,6 +54,8 @@ data/
 # Yelp Dataset (NEVER commit - too large)
 yelp_dataset/
 *.json
+import_log.txt
+test_connection.py
 
 # Docker
 .docker/

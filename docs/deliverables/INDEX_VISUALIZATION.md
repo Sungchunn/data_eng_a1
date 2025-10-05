@@ -18,9 +18,8 @@
         │                       │                       │
    [PK] business_id        [IDX] city, state      [IDX] stars ↓
         │                       │                       │
-   Identity lookup      Location filter         Rating sort
-   ⚡ <1ms               ⚡ ~10ms                ⚡ <5ms
-
+   Identity lookup      Location filter            Rating sort
+   ⚡ <1ms               ⚡ ~10ms                      ⚡ <5ms
         │                       │                       │
    [PARTIAL] is_open=1     [IDX] lat, lng         [IDX] review_count ↓
         │                       │                       │
@@ -48,13 +47,12 @@
    [PK] user_id    [IDX] review_count ↓  [IDX] fans ↓   [IDX] yelping_since
         │               │               │               │
    Identity        Top reviewers    Influencers    Cohort analysis
-   ⚡ <1ms         ⚡ <5ms          ⚡ <5ms        ⚡ ~10ms
-
-                       │
+     ⚡ <1ms          ⚡ <5ms          ⚡ <5ms          ⚡ ~10ms
+                        │
                 [IDX] average_stars
-                       │
+                        │
                 Rating distribution
-                ⚡ <10ms
+                    ⚡ <10ms
 ```
 
 **Query Patterns:**
