@@ -41,7 +41,7 @@ def get_connection():
 
 
 @time_query
-def average_rating(user_id: str) -> Optional[float]:
+def average_rating(user_id: str) -> Optional[Tuple[str, float]]:
     """
     Calculate the average star rating given by a user across all their reviews.
 
@@ -49,7 +49,7 @@ def average_rating(user_id: str) -> Optional[float]:
         user_id: The user's unique identifier
 
     Returns:
-        Average star rating (1.0-5.0) or None if user has no reviews
+        Tuple of (user_name, average_rating) or None if user has no reviews
 
     Performance: O(n) where n = number of reviews by user
     Index used: idx_reviews_user_id
@@ -58,20 +58,22 @@ def average_rating(user_id: str) -> Optional[float]:
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT AVG(stars)::DECIMAL(3,2)
-        FROM reviews
-        WHERE user_id = %s
+        SELECT u.name, AVG(r.stars)::DECIMAL(3,2) AS avg_rating
+        FROM users u
+        JOIN reviews r ON u.user_id = r.user_id
+        WHERE u.user_id = %s
+        GROUP BY u.name
     """, (user_id,))
 
     result = cursor.fetchone()
     cursor.close()
     conn.close()
 
-    return float(result[0]) if result[0] is not None else None
+    return (result[0], float(result[1])) if result else None
 
 
 @time_query
-def still_there(state: str) -> List[Tuple[str, str, int]]:
+def still_there(state: str) -> List[Tuple[str, str, str, float, float, float]]:
     """
     Find top 9 open businesses in a state by review count.
 
@@ -79,7 +81,7 @@ def still_there(state: str) -> List[Tuple[str, str, int]]:
         state: Two-letter state code (e.g., 'CA', 'NY')
 
     Returns:
-        List of tuples: (business_id, name, review_count)
+        List of tuples: (business_id, name, full_address, latitude, longitude, stars)
         Exactly 9 results (or fewer if state has <9 open businesses)
 
     Performance: O(n log n) where n = businesses in state
@@ -89,7 +91,13 @@ def still_there(state: str) -> List[Tuple[str, str, int]]:
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT business_id, name, review_count
+        SELECT
+            business_id,
+            name,
+            CONCAT(address, ', ', city, ', ', state, ' ', postal_code) AS full_address,
+            latitude,
+            longitude,
+            stars
         FROM businesses
         WHERE state = %s AND is_open = 1
         ORDER BY review_count DESC
@@ -104,7 +112,7 @@ def still_there(state: str) -> List[Tuple[str, str, int]]:
 
 
 @time_query
-def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
+def top_reviews(business_id: str) -> List[Tuple[str, str, int, str]]:
     """
     Find top 7 most useful reviews for a business.
 
@@ -112,7 +120,7 @@ def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
         business_id: The business's unique identifier
 
     Returns:
-        List of tuples: (review_id, user_id, user_name, useful_count)
+        List of tuples: (user_id, user_name, review_stars, review_text)
         Exactly 7 results (or fewer if business has <7 reviews)
 
     Performance: O(n log n) where n = reviews for business
@@ -122,7 +130,7 @@ def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT r.review_id, r.user_id, u.name, r.useful
+        SELECT r.user_id, u.name, r.stars, r.text
         FROM reviews r
         JOIN users u ON r.user_id = u.user_id
         WHERE r.business_id = %s
@@ -138,7 +146,7 @@ def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
 
 
 @time_query
-def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]:
+def high_fives(city: str, top_count: int) -> List[Tuple[str, str, str, int, float, float, float]]:
     """
     Find businesses with highest percentage of 5-star reviews in a city.
     Only includes businesses with at least 15 reviews.
@@ -148,7 +156,8 @@ def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]
         top_count: Number of top businesses to return
 
     Returns:
-        List of tuples: (business_id, name, five_star_pct, two_plus_star_pct)
+        List of tuples: (business_id, name, full_address, review_count, stars,
+                        five_star_pct, two_plus_star_pct)
         Percentages are decimals (e.g., 0.85 = 85%)
 
     Performance: O(n) where n = businesses in city with >=15 reviews
@@ -161,6 +170,9 @@ def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]
         SELECT
             b.business_id,
             b.name,
+            CONCAT(b.address, ', ', b.city, ', ', b.state, ' ', b.postal_code) AS full_address,
+            b.review_count,
+            b.stars,
             ROUND(
                 COUNT(*) FILTER (WHERE r.stars = 5)::DECIMAL /
                 COUNT(*)::DECIMAL,
@@ -174,7 +186,7 @@ def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]
         FROM businesses b
         JOIN reviews r ON b.business_id = r.business_id
         WHERE b.city = %s
-        GROUP BY b.business_id, b.name
+        GROUP BY b.business_id, b.name, b.address, b.city, b.state, b.postal_code, b.review_count, b.stars
         HAVING COUNT(*) >= 15
         ORDER BY five_star_pct DESC
         LIMIT %s
@@ -188,7 +200,7 @@ def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]
 
 
 @time_query
-def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tuple[str, str, int]]:
+def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tuple[str, str, str, int, float, int]]:
     """
     Find businesses with most elite user reviews in a city.
     Only includes businesses with at least elite_count elite reviews.
@@ -201,7 +213,7 @@ def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tup
         top_count: Number of top businesses to return
 
     Returns:
-        List of tuples: (business_id, name, elite_review_count)
+        List of tuples: (business_id, name, full_address, review_count, stars, elite_review_count)
 
     Performance: O(n * m) where n = businesses, m = reviews
     Index used: idx_businesses_city, idx_reviews_business_id, idx_user_elite_years_user_id
@@ -213,12 +225,15 @@ def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tup
         SELECT
             b.business_id,
             b.name,
+            CONCAT(b.address, ', ', b.city, ', ', b.state, ' ', b.postal_code) AS full_address,
+            b.review_count,
+            b.stars,
             COUNT(DISTINCT r.user_id) AS elite_review_count
         FROM businesses b
         JOIN reviews r ON b.business_id = r.business_id
         WHERE b.city = %s
           AND r.user_id IN (SELECT user_id FROM user_elite_years)
-        GROUP BY b.business_id, b.name
+        GROUP BY b.business_id, b.name, b.address, b.city, b.state, b.postal_code, b.review_count, b.stars
         HAVING COUNT(DISTINCT r.user_id) >= %s
         ORDER BY elite_review_count DESC
         LIMIT %s
@@ -251,15 +266,16 @@ def test_queries():
     cursor.close()
     conn.close()
 
-    avg = average_rating(sample_user)
-    print(f"   User {sample_user}: Average rating = {avg}")
+    result = average_rating(sample_user)
+    if result:
+        print(f"   User: {result[0]}, Average rating: {result[1]}")
 
     # Test 2: still_there
     print("\n2. Testing still_there(state)...")
     results = still_there('PA')
     print(f"   Found {len(results)} open businesses in PA")
     if results:
-        print(f"   Top business: {results[0][1]} ({results[0][2]} reviews)")
+        print(f"   Top: {results[0][1]} ({results[0][5]} stars) - {results[0][2]}")
 
     # Test 3: top_reviews
     print("\n3. Testing top_reviews(business_id)...")
@@ -273,21 +289,21 @@ def test_queries():
     reviews = top_reviews(sample_business)
     print(f"   Found {len(reviews)} top reviews for business {sample_business}")
     if reviews:
-        print(f"   Most useful review: {reviews[0][2]} ({reviews[0][3]} useful votes)")
+        print(f"   Top review by {reviews[0][1]}: {reviews[0][2]} stars - {reviews[0][3][:100]}...")
 
     # Test 4: high_fives
     print("\n4. Testing high_fives(city, top_count)...")
     results = high_fives('Philadelphia', 5)
     print(f"   Found {len(results)} businesses with high 5-star ratings")
     if results:
-        print(f"   Top: {results[0][1]} ({results[0][2]*100:.1f}% five-star)")
+        print(f"   Top: {results[0][1]} ({results[0][5]*100:.1f}% five-star, {results[0][3]} reviews)")
 
     # Test 5: topBusiness_in_city
     print("\n5. Testing topBusiness_in_city(city, elite_count, top_count)...")
     results = topBusiness_in_city('Philadelphia', 10, 5)
     print(f"   Found {len(results)} businesses with >=10 elite reviews")
     if results:
-        print(f"   Top: {results[0][1]} ({results[0][2]} elite reviews)")
+        print(f"   Top: {results[0][1]} ({results[0][5]} elite reviews, {results[0][4]} stars)")
 
     print("\n" + "="*60)
     print("ALL TESTS COMPLETE")
