@@ -412,8 +412,14 @@ def import_reviews(filepath):
             for line in tqdm(f, total=total_lines, desc="Processing reviews"):
                 record = json.loads(line)
 
-                # Parse date
-                review_date = datetime.strptime(record['date'], '%Y-%m-%d').date()
+                # Parse date (handle both date-only and datetime formats)
+                date_str = record['date']
+                try:
+                    # Try date-only format first
+                    review_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    # Fall back to datetime format
+                    review_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S').date()
 
                 review_batch.append((
                     record['review_id'],
@@ -485,8 +491,12 @@ def import_tips(filepath):
             for line in tqdm(f, total=total_lines, desc="Processing tips"):
                 record = json.loads(line)
 
-                # Parse date
-                tip_date = datetime.strptime(record['date'], '%Y-%m-%d').date()
+                # Parse date (handle both date-only and datetime formats)
+                date_str = record['date']
+                try:
+                    tip_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    tip_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S').date()
 
                 tip_batch.append((
                     record['user_id'],
