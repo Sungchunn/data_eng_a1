@@ -23,8 +23,8 @@ CREATE TABLE businesses (
     name VARCHAR(255) NOT NULL,
     address TEXT,
     city VARCHAR(100),
-    state VARCHAR(2),
-    postal_code VARCHAR(10),
+    state VARCHAR(10),
+    postal_code VARCHAR(20),
     latitude DECIMAL(10, 7),
     longitude DECIMAL(10, 7),
     stars DECIMAL(2, 1),
@@ -106,7 +106,7 @@ CREATE TABLE user_elite_years (
     year SMALLINT NOT NULL,
     PRIMARY KEY (user_id, year),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-    CONSTRAINT valid_year CHECK (year >= 2004 AND year <= 2030)
+    CONSTRAINT valid_year CHECK (year >= 4 AND year <= 2030)
 );
 
 -- ============================================================================

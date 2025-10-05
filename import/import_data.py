@@ -328,8 +328,15 @@ def import_user_friends(filepath):
     conn.autocommit = False
     cursor = conn.cursor()
 
+    # Pre-load all valid user IDs into a set for O(1) lookup
+    print("Loading valid user IDs...")
+    cursor.execute("SELECT user_id FROM users")
+    valid_users = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_users):,} valid user IDs")
+
     friends_batch = []
     total_lines = count_lines(filepath)
+    skipped = 0
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -346,6 +353,11 @@ def import_user_friends(filepath):
                         friend_list = [f.strip() for f in friends.split(',') if f.strip()]
 
                     for friend_id in friend_list:
+                        # Skip if either user doesn't exist (in-memory validation)
+                        if user_id not in valid_users or friend_id not in valid_users:
+                            skipped += 1
+                            continue
+
                         # Store only one direction to avoid duplicates
                         if user_id < friend_id:
                             friends_batch.append((user_id, friend_id))
@@ -374,7 +386,7 @@ def import_user_friends(filepath):
         cursor.close()
         conn.close()
 
-        print("✅ User friendships imported successfully")
+        print(f"✅ User friendships imported successfully (skipped {skipped:,} invalid friendships)")
 
     except Exception as e:
         conn.rollback()
