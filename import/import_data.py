@@ -1,0 +1,675 @@
+"""
+Import Yelp dataset into PostgreSQL database
+
+This script imports all JSON files from the Yelp academic dataset into
+the PostgreSQL database with proper transformations and batch processing.
+"""
+
+import json
+import psycopg2
+from psycopg2.extras import execute_batch
+from pathlib import Path
+from datetime import datetime
+from tqdm import tqdm
+import os
+from dotenv import load_dotenv
+import sys
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+BATCH_SIZE = 10000
+DATASET_DIR = Path(__file__).parent.parent / 'yelp_dataset'
+
+def get_connection():
+    """Create database connection"""
+    return psycopg2.connect(
+        host=os.getenv('DB_HOST', 'localhost'),
+        port=os.getenv('DB_PORT', '5433'),
+        database=os.getenv('DB_NAME', 'yelp'),
+        user=os.getenv('DB_USER', 'postgres'),
+        password=os.getenv('DB_PASSWORD', 'postgres')
+    )
+
+def count_lines(filepath):
+    """Count total lines in file for progress bar"""
+    print(f"Counting lines in {filepath.name}...")
+    with open(filepath, 'rb') as f:
+        return sum(1 for _ in f)
+
+def import_businesses(filepath):
+    """Import businesses from JSON file"""
+    print("\n" + "="*60)
+    print("IMPORTING BUSINESSES")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    # Prepare batches
+    business_batch = []
+    category_batch = []
+    hours_batch = []
+    attributes_batch = []
+
+    total_lines = count_lines(filepath)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing businesses"):
+                record = json.loads(line)
+
+                # Main business record
+                business_batch.append((
+                    record['business_id'],
+                    record.get('name'),
+                    record.get('address'),
+                    record.get('city'),
+                    record.get('state'),
+                    record.get('postal_code'),
+                    record.get('latitude'),
+                    record.get('longitude'),
+                    record.get('stars'),
+                    record.get('review_count', 0),
+                    record.get('is_open', 1)
+                ))
+
+                # Categories (split comma-separated string)
+                categories = record.get('categories')
+                if categories:
+                    for category in categories.split(', '):
+                        category_batch.append((
+                            record['business_id'],
+                            category.strip()
+                        ))
+
+                # Hours
+                hours = record.get('hours')
+                if hours:
+                    for day, time_range in hours.items():
+                        hours_batch.append((
+                            record['business_id'],
+                            day,
+                            time_range
+                        ))
+
+                # Attributes
+                attributes = record.get('attributes')
+                if attributes:
+                    for attr_name, attr_value in attributes.items():
+                        # Convert dicts to JSON strings
+                        if isinstance(attr_value, dict):
+                            value_str = json.dumps(attr_value)
+                        else:
+                            value_str = str(attr_value)
+
+                        attributes_batch.append((
+                            record['business_id'],
+                            attr_name,
+                            value_str
+                        ))
+
+                # Commit batches
+                if len(business_batch) >= BATCH_SIZE:
+                    execute_batch(cursor, """
+                        INSERT INTO businesses
+                        (business_id, name, address, city, state, postal_code,
+                         latitude, longitude, stars, review_count, is_open)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (business_id) DO NOTHING
+                    """, business_batch)
+
+                    if category_batch:
+                        execute_batch(cursor, """
+                            INSERT INTO business_categories (business_id, category)
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, category_batch)
+
+                    if hours_batch:
+                        execute_batch(cursor, """
+                            INSERT INTO business_hours (business_id, day, hours)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, hours_batch)
+
+                    if attributes_batch:
+                        execute_batch(cursor, """
+                            INSERT INTO business_attributes
+                            (business_id, attribute_name, attribute_value)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, attributes_batch)
+
+                    conn.commit()
+                    business_batch = []
+                    category_batch = []
+                    hours_batch = []
+                    attributes_batch = []
+
+        # Final batch
+        if business_batch:
+            execute_batch(cursor, """
+                INSERT INTO businesses
+                (business_id, name, address, city, state, postal_code,
+                 latitude, longitude, stars, review_count, is_open)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (business_id) DO NOTHING
+            """, business_batch)
+
+            if category_batch:
+                execute_batch(cursor, """
+                    INSERT INTO business_categories (business_id, category)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, category_batch)
+
+            if hours_batch:
+                execute_batch(cursor, """
+                    INSERT INTO business_hours (business_id, day, hours)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, hours_batch)
+
+            if attributes_batch:
+                execute_batch(cursor, """
+                    INSERT INTO business_attributes
+                    (business_id, attribute_name, attribute_value)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, attributes_batch)
+
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print("✅ Businesses imported successfully")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing businesses: {e}")
+        raise
+
+def import_users(filepath):
+    """Import users from JSON file"""
+    print("\n" + "="*60)
+    print("IMPORTING USERS")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    user_batch = []
+    elite_batch = []
+
+    total_lines = count_lines(filepath)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing users"):
+                record = json.loads(line)
+
+                # Parse yelping_since date
+                yelping_since = None
+                if record.get('yelping_since'):
+                    try:
+                        # Try with timestamp first
+                        yelping_since = datetime.strptime(
+                            record['yelping_since'], '%Y-%m-%d %H:%M:%S'
+                        ).date()
+                    except ValueError:
+                        # Fall back to date only
+                        yelping_since = datetime.strptime(
+                            record['yelping_since'], '%Y-%m-%d'
+                        ).date()
+
+                # Main user record
+                user_batch.append((
+                    record['user_id'],
+                    record.get('name'),
+                    record.get('review_count', 0),
+                    yelping_since,
+                    record.get('useful', 0),
+                    record.get('funny', 0),
+                    record.get('cool', 0),
+                    record.get('fans', 0),
+                    record.get('average_stars'),
+                    record.get('compliment_hot', 0),
+                    record.get('compliment_more', 0),
+                    record.get('compliment_profile', 0),
+                    record.get('compliment_cute', 0),
+                    record.get('compliment_list', 0),
+                    record.get('compliment_note', 0),
+                    record.get('compliment_plain', 0),
+                    record.get('compliment_cool', 0),
+                    record.get('compliment_funny', 0),
+                    record.get('compliment_writer', 0),
+                    record.get('compliment_photos', 0)
+                ))
+
+                # Elite years
+                elite = record.get('elite')
+                if elite and elite != 'None' and elite:
+                    # Handle both array and comma-separated string formats
+                    if isinstance(elite, list):
+                        years = elite
+                    else:
+                        years = [int(y) for y in str(elite).split(',') if y.strip().isdigit()]
+
+                    for year in years:
+                        if isinstance(year, int):
+                            elite_batch.append((record['user_id'], year))
+
+                # Commit batch
+                if len(user_batch) >= BATCH_SIZE:
+                    execute_batch(cursor, """
+                        INSERT INTO users
+                        (user_id, name, review_count, yelping_since, useful, funny, cool, fans,
+                         average_stars, compliment_hot, compliment_more, compliment_profile,
+                         compliment_cute, compliment_list, compliment_note, compliment_plain,
+                         compliment_cool, compliment_funny, compliment_writer, compliment_photos)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (user_id) DO NOTHING
+                    """, user_batch)
+
+                    if elite_batch:
+                        execute_batch(cursor, """
+                            INSERT INTO user_elite_years (user_id, year)
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, elite_batch)
+
+                    conn.commit()
+                    user_batch = []
+                    elite_batch = []
+
+        # Final batch
+        if user_batch:
+            execute_batch(cursor, """
+                INSERT INTO users
+                (user_id, name, review_count, yelping_since, useful, funny, cool, fans,
+                 average_stars, compliment_hot, compliment_more, compliment_profile,
+                 compliment_cute, compliment_list, compliment_note, compliment_plain,
+                 compliment_cool, compliment_funny, compliment_writer, compliment_photos)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO NOTHING
+            """, user_batch)
+
+            if elite_batch:
+                execute_batch(cursor, """
+                    INSERT INTO user_elite_years (user_id, year)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, elite_batch)
+
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print("✅ Users imported successfully")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing users: {e}")
+        raise
+
+def import_user_friends(filepath):
+    """Import user friendships - run after users are imported"""
+    print("\n" + "="*60)
+    print("IMPORTING USER FRIENDSHIPS")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    friends_batch = []
+    total_lines = count_lines(filepath)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing friendships"):
+                record = json.loads(line)
+                user_id = record['user_id']
+
+                friends = record.get('friends')
+                if friends and friends != 'None':
+                    # Handle both array and comma-separated string
+                    if isinstance(friends, list):
+                        friend_list = friends
+                    else:
+                        friend_list = [f.strip() for f in friends.split(',') if f.strip()]
+
+                    for friend_id in friend_list:
+                        # Store only one direction to avoid duplicates
+                        if user_id < friend_id:
+                            friends_batch.append((user_id, friend_id))
+                        else:
+                            friends_batch.append((friend_id, user_id))
+
+                # Commit batch
+                if len(friends_batch) >= BATCH_SIZE:
+                    execute_batch(cursor, """
+                        INSERT INTO user_friends (user_id, friend_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, friends_batch)
+                    conn.commit()
+                    friends_batch = []
+
+        # Final batch
+        if friends_batch:
+            execute_batch(cursor, """
+                INSERT INTO user_friends (user_id, friend_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, friends_batch)
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print("✅ User friendships imported successfully")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing friendships: {e}")
+        raise
+
+def import_reviews(filepath):
+    """Import reviews from JSON file"""
+    print("\n" + "="*60)
+    print("IMPORTING REVIEWS")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    review_batch = []
+    total_lines = count_lines(filepath)
+    skipped = 0
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing reviews"):
+                record = json.loads(line)
+
+                # Parse date
+                review_date = datetime.strptime(record['date'], '%Y-%m-%d').date()
+
+                review_batch.append((
+                    record['review_id'],
+                    record['user_id'],
+                    record['business_id'],
+                    record['stars'],
+                    review_date,
+                    record['text'],
+                    record.get('useful', 0),
+                    record.get('funny', 0),
+                    record.get('cool', 0)
+                ))
+
+                # Commit batch
+                if len(review_batch) >= BATCH_SIZE:
+                    try:
+                        execute_batch(cursor, """
+                            INSERT INTO reviews
+                            (review_id, user_id, business_id, stars, date, text, useful, funny, cool)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (review_id) DO NOTHING
+                        """, review_batch)
+                        conn.commit()
+                    except Exception as e:
+                        conn.rollback()
+                        skipped += len(review_batch)
+
+                    review_batch = []
+
+        # Final batch
+        if review_batch:
+            try:
+                execute_batch(cursor, """
+                    INSERT INTO reviews
+                    (review_id, user_id, business_id, stars, date, text, useful, funny, cool)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (review_id) DO NOTHING
+                """, review_batch)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                skipped += len(review_batch)
+
+        cursor.close()
+        conn.close()
+
+        print(f"✅ Reviews imported successfully (skipped {skipped} due to FK constraints)")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing reviews: {e}")
+        raise
+
+def import_tips(filepath):
+    """Import tips from JSON file"""
+    print("\n" + "="*60)
+    print("IMPORTING TIPS")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    tip_batch = []
+    total_lines = count_lines(filepath)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing tips"):
+                record = json.loads(line)
+
+                # Parse date
+                tip_date = datetime.strptime(record['date'], '%Y-%m-%d').date()
+
+                tip_batch.append((
+                    record['user_id'],
+                    record['business_id'],
+                    record['text'],
+                    tip_date,
+                    record.get('compliment_count', 0)
+                ))
+
+                # Commit batch
+                if len(tip_batch) >= BATCH_SIZE:
+                    execute_batch(cursor, """
+                        INSERT INTO tips (user_id, business_id, text, date, compliment_count)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, tip_batch)
+                    conn.commit()
+                    tip_batch = []
+
+        # Final batch
+        if tip_batch:
+            execute_batch(cursor, """
+                INSERT INTO tips (user_id, business_id, text, date, compliment_count)
+                VALUES (%s, %s, %s, %s, %s)
+            """, tip_batch)
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print("✅ Tips imported successfully")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing tips: {e}")
+        raise
+
+def import_checkins(filepath):
+    """Import checkins from JSON file"""
+    print("\n" + "="*60)
+    print("IMPORTING CHECKINS")
+    print("="*60)
+
+    conn = get_connection()
+    conn.autocommit = False
+    cursor = conn.cursor()
+
+    checkin_batch = []
+    total_lines = count_lines(filepath)
+
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line in tqdm(f, total=total_lines, desc="Processing checkins"):
+                record = json.loads(line)
+                business_id = record['business_id']
+
+                # Parse comma-separated timestamps
+                date_str = record.get('date', '')
+                if date_str:
+                    timestamps = [ts.strip() for ts in date_str.split(',') if ts.strip()]
+
+                    for ts in timestamps:
+                        try:
+                            dt = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+                            checkin_batch.append((business_id, dt))
+                        except:
+                            continue
+
+                # Commit batch
+                if len(checkin_batch) >= BATCH_SIZE:
+                    execute_batch(cursor, """
+                        INSERT INTO checkins (business_id, checkin_time)
+                        VALUES (%s, %s)
+                    """, checkin_batch)
+                    conn.commit()
+                    checkin_batch = []
+
+        # Final batch
+        if checkin_batch:
+            execute_batch(cursor, """
+                INSERT INTO checkins (business_id, checkin_time)
+                VALUES (%s, %s)
+            """, checkin_batch)
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+
+        print("✅ Checkins imported successfully")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error importing checkins: {e}")
+        raise
+
+def verify_import():
+    """Verify data was imported correctly"""
+    print("\n" + "="*60)
+    print("VERIFYING IMPORT")
+    print("="*60)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            'businesses' AS table_name, COUNT(*) AS row_count FROM businesses
+        UNION ALL SELECT 'business_categories', COUNT(*) FROM business_categories
+        UNION ALL SELECT 'business_hours', COUNT(*) FROM business_hours
+        UNION ALL SELECT 'business_attributes', COUNT(*) FROM business_attributes
+        UNION ALL SELECT 'users', COUNT(*) FROM users
+        UNION ALL SELECT 'user_friends', COUNT(*) FROM user_friends
+        UNION ALL SELECT 'user_elite_years', COUNT(*) FROM user_elite_years
+        UNION ALL SELECT 'reviews', COUNT(*) FROM reviews
+        UNION ALL SELECT 'tips', COUNT(*) FROM tips
+        UNION ALL SELECT 'checkins', COUNT(*) FROM checkins
+    """)
+
+    results = cursor.fetchall()
+
+    print(f"\n{'Table':<25} {'Rows':>15}")
+    print("-"*42)
+
+    total = 0
+    for table, count in results:
+        print(f"{table:<25} {count:>15,}")
+        total += count
+
+    print("-"*42)
+    print(f"{'TOTAL':<25} {total:>15,}")
+
+    cursor.close()
+    conn.close()
+
+def main():
+    """Main import function"""
+    start_time = datetime.now()
+
+    print("\n" + "="*60)
+    print("YELP DATASET IMPORT")
+    print("="*60)
+    print(f"Start time: {start_time}")
+    print(f"Dataset directory: {DATASET_DIR}")
+    print(f"Batch size: {BATCH_SIZE:,}")
+
+    # Check dataset directory exists
+    if not DATASET_DIR.exists():
+        print(f"\n❌ Error: Dataset directory not found: {DATASET_DIR}")
+        print("Please download the Yelp dataset and place it in the 'yelp_dataset' directory")
+        sys.exit(1)
+
+    # Import order matters due to foreign key constraints
+    files = {
+        'businesses': DATASET_DIR / 'yelp_academic_dataset_business.json',
+        'users': DATASET_DIR / 'yelp_academic_dataset_user.json',
+        'reviews': DATASET_DIR / 'yelp_academic_dataset_review.json',
+        'tips': DATASET_DIR / 'yelp_academic_dataset_tip.json',
+        'checkins': DATASET_DIR / 'yelp_academic_dataset_checkin.json',
+    }
+
+    # Check all files exist
+    for name, filepath in files.items():
+        if not filepath.exists():
+            print(f"\n❌ Error: {name} file not found: {filepath}")
+            sys.exit(1)
+
+    try:
+        # Phase 1: Independent tables
+        import_businesses(files['businesses'])
+        import_users(files['users'])
+
+        # Phase 2: User friendships (after users)
+        import_user_friends(files['users'])
+
+        # Phase 3: Dependent tables
+        import_reviews(files['reviews'])
+        import_tips(files['tips'])
+        import_checkins(files['checkins'])
+
+        # Verify
+        verify_import()
+
+        end_time = datetime.now()
+        duration = end_time - start_time
+
+        print("\n" + "="*60)
+        print("✅ IMPORT COMPLETE")
+        print("="*60)
+        print(f"Start time: {start_time}")
+        print(f"End time: {end_time}")
+        print(f"Duration: {duration}")
+        print("="*60)
+
+    except Exception as e:
+        print(f"\n❌ Import failed: {e}")
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
