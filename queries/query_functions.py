@@ -8,9 +8,26 @@ All queries use proper indexing and are limited to single SQL statements.
 import psycopg2
 from typing import List, Tuple, Optional
 import os
+import time
+from functools import wraps
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def time_query(func):
+    """Decorator to measure and display query execution time"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        elapsed = time.perf_counter() - start
+
+        status = "✅" if elapsed < 1.0 else "⚠️"
+        print(f"{status} {func.__name__}() executed in {elapsed*1000:.2f}ms")
+
+        return result
+    return wrapper
 
 def get_connection():
     """Create database connection"""
@@ -23,6 +40,7 @@ def get_connection():
     )
 
 
+@time_query
 def average_rating(user_id: str) -> Optional[float]:
     """
     Calculate the average star rating given by a user across all their reviews.
@@ -52,6 +70,7 @@ def average_rating(user_id: str) -> Optional[float]:
     return float(result[0]) if result[0] is not None else None
 
 
+@time_query
 def still_there(state: str) -> List[Tuple[str, str, int]]:
     """
     Find top 9 open businesses in a state by review count.
@@ -84,6 +103,7 @@ def still_there(state: str) -> List[Tuple[str, str, int]]:
     return results
 
 
+@time_query
 def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
     """
     Find top 7 most useful reviews for a business.
@@ -117,6 +137,7 @@ def top_reviews(business_id: str) -> List[Tuple[str, str, str, int]]:
     return results
 
 
+@time_query
 def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]:
     """
     Find businesses with highest percentage of 5-star reviews in a city.
@@ -166,6 +187,7 @@ def high_fives(city: str, top_count: int) -> List[Tuple[str, str, float, float]]
     return results
 
 
+@time_query
 def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tuple[str, str, int]]:
     """
     Find businesses with most elite user reviews in a city.
@@ -191,16 +213,13 @@ def topBusiness_in_city(city: str, elite_count: int, top_count: int) -> List[Tup
         SELECT
             b.business_id,
             b.name,
-            COUNT(DISTINCT elite_reviews.user_id) AS elite_review_count
+            COUNT(DISTINCT r.user_id) AS elite_review_count
         FROM businesses b
-        JOIN (
-            SELECT DISTINCT r.business_id, r.user_id
-            FROM reviews r
-            WHERE r.user_id IN (SELECT DISTINCT user_id FROM user_elite_years)
-        ) elite_reviews ON b.business_id = elite_reviews.business_id
+        JOIN reviews r ON b.business_id = r.business_id
         WHERE b.city = %s
+          AND r.user_id IN (SELECT user_id FROM user_elite_years)
         GROUP BY b.business_id, b.name
-        HAVING COUNT(DISTINCT elite_reviews.user_id) >= %s
+        HAVING COUNT(DISTINCT r.user_id) >= %s
         ORDER BY elite_review_count DESC
         LIMIT %s
     """, (city, elite_count, top_count))
