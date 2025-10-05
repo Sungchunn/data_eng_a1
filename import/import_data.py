@@ -406,15 +406,39 @@ def import_reviews(filepath):
     conn.autocommit = False
     cursor = conn.cursor()
 
+    # Pre-load valid user and business IDs to avoid FK violations
+    print("Loading valid user IDs...")
+    cursor.execute("SELECT user_id FROM users")
+    valid_users = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_users):,} valid user IDs")
+
+    print("Loading valid business IDs...")
+    cursor.execute("SELECT business_id FROM businesses")
+    valid_businesses = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_businesses):,} valid business IDs")
+
     total_lines = count_lines(filepath)
     buffer = StringIO()
     batch_count = 0
     total_imported = 0
+    skipped = 0
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in tqdm(f, total=total_lines, desc="Processing reviews"):
                 record = json.loads(line)
+
+                # Skip reviews with invalid user_id or business_id
+                user_id = record.get('user_id')
+                business_id = record.get('business_id')
+
+                if not user_id or user_id not in valid_users:
+                    skipped += 1
+                    continue
+
+                if not business_id or business_id not in valid_businesses:
+                    skipped += 1
+                    continue
 
                 # Parse date (handle both date-only and datetime formats)
                 date_str = record['date']
@@ -430,7 +454,7 @@ def import_reviews(filepath):
                 stars = int(float(record['stars']))
 
                 # Write to buffer as tab-separated values
-                buffer.write(f"{record['review_id']}\t{record['user_id']}\t{record['business_id']}\t"
+                buffer.write(f"{record['review_id']}\t{user_id}\t{business_id}\t"
                            f"{stars}\t{review_date}\t{text}\t"
                            f"{int(record.get('useful', 0))}\t{int(record.get('funny', 0))}\t{int(record.get('cool', 0))}\n")
 
@@ -459,7 +483,7 @@ def import_reviews(filepath):
         cursor.close()
         conn.close()
 
-        print(f"✅ Reviews imported successfully ({total_imported:,} reviews)")
+        print(f"✅ Reviews imported successfully ({total_imported:,} reviews, skipped {skipped:,} invalid references)")
 
     except Exception as e:
         conn.rollback()
@@ -476,13 +500,37 @@ def import_tips(filepath):
     conn.autocommit = False
     cursor = conn.cursor()
 
+    # Pre-load valid user and business IDs
+    print("Loading valid user IDs...")
+    cursor.execute("SELECT user_id FROM users")
+    valid_users = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_users):,} valid user IDs")
+
+    print("Loading valid business IDs...")
+    cursor.execute("SELECT business_id FROM businesses")
+    valid_businesses = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_businesses):,} valid business IDs")
+
     tip_batch = []
     total_lines = count_lines(filepath)
+    skipped = 0
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in tqdm(f, total=total_lines, desc="Processing tips"):
                 record = json.loads(line)
+
+                # Skip tips with invalid user_id or business_id
+                user_id = record.get('user_id')
+                business_id = record.get('business_id')
+
+                if not user_id or user_id not in valid_users:
+                    skipped += 1
+                    continue
+
+                if not business_id or business_id not in valid_businesses:
+                    skipped += 1
+                    continue
 
                 # Parse date (handle both date-only and datetime formats)
                 date_str = record['date']
@@ -492,8 +540,8 @@ def import_tips(filepath):
                     tip_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S').date()
 
                 tip_batch.append((
-                    record['user_id'],
-                    record['business_id'],
+                    user_id,
+                    business_id,
                     record['text'],
                     tip_date,
                     record.get('compliment_count', 0)
@@ -519,7 +567,7 @@ def import_tips(filepath):
         cursor.close()
         conn.close()
 
-        print("✅ Tips imported successfully")
+        print(f"✅ Tips imported successfully (skipped {skipped:,} invalid references)")
 
     except Exception as e:
         conn.rollback()
@@ -536,14 +584,26 @@ def import_checkins(filepath):
     conn.autocommit = False
     cursor = conn.cursor()
 
+    # Pre-load valid business IDs
+    print("Loading valid business IDs...")
+    cursor.execute("SELECT business_id FROM businesses")
+    valid_businesses = set(row[0] for row in cursor.fetchall())
+    print(f"Loaded {len(valid_businesses):,} valid business IDs")
+
     checkin_batch = []
     total_lines = count_lines(filepath)
+    skipped = 0
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in tqdm(f, total=total_lines, desc="Processing checkins"):
                 record = json.loads(line)
-                business_id = record['business_id']
+                business_id = record.get('business_id')
+
+                # Skip checkins with invalid business_id
+                if not business_id or business_id not in valid_businesses:
+                    skipped += 1
+                    continue
 
                 # Parse comma-separated timestamps
                 date_str = record.get('date', '')
@@ -577,7 +637,7 @@ def import_checkins(filepath):
         cursor.close()
         conn.close()
 
-        print("✅ Checkins imported successfully")
+        print(f"✅ Checkins imported successfully (skipped {skipped:,} invalid references)")
 
     except Exception as e:
         conn.rollback()
