@@ -14,12 +14,15 @@ from tqdm import tqdm
 import os
 from dotenv import load_dotenv
 import sys
+from io import StringIO
+import csv
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
-BATCH_SIZE = 10000
+BATCH_SIZE = 50000  # Increased from 10000 for better performance
+COPY_BATCH_SIZE = 100000  # For COPY operations (larger batches)
 DATASET_DIR = Path(__file__).parent.parent / 'yelp_dataset'
 
 def get_connection():
@@ -394,18 +397,19 @@ def import_user_friends(filepath):
         raise
 
 def import_reviews(filepath):
-    """Import reviews from JSON file"""
+    """Import reviews from JSON file using COPY for maximum performance"""
     print("\n" + "="*60)
-    print("IMPORTING REVIEWS")
+    print("IMPORTING REVIEWS (using COPY)")
     print("="*60)
 
     conn = get_connection()
     conn.autocommit = False
     cursor = conn.cursor()
 
-    review_batch = []
     total_lines = count_lines(filepath)
-    skipped = 0
+    buffer = StringIO()
+    batch_count = 0
+    total_imported = 0
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -415,58 +419,44 @@ def import_reviews(filepath):
                 # Parse date (handle both date-only and datetime formats)
                 date_str = record['date']
                 try:
-                    # Try date-only format first
                     review_date = datetime.strptime(date_str, '%Y-%m-%d').date()
                 except ValueError:
-                    # Fall back to datetime format
                     review_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M:%S').date()
 
-                review_batch.append((
-                    record['review_id'],
-                    record['user_id'],
-                    record['business_id'],
-                    record['stars'],
-                    review_date,
-                    record['text'],
-                    record.get('useful', 0),
-                    record.get('funny', 0),
-                    record.get('cool', 0)
-                ))
+                # Escape text for COPY (handle tabs, newlines, backslashes)
+                text = record['text'].replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
-                # Commit batch
-                if len(review_batch) >= BATCH_SIZE:
-                    try:
-                        execute_batch(cursor, """
-                            INSERT INTO reviews
-                            (review_id, user_id, business_id, stars, date, text, useful, funny, cool)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (review_id) DO NOTHING
-                        """, review_batch)
-                        conn.commit()
-                    except Exception as e:
-                        conn.rollback()
-                        skipped += len(review_batch)
+                # Write to buffer as tab-separated values
+                buffer.write(f"{record['review_id']}\t{record['user_id']}\t{record['business_id']}\t"
+                           f"{record['stars']}\t{review_date}\t{text}\t"
+                           f"{record.get('useful', 0)}\t{record.get('funny', 0)}\t{record.get('cool', 0)}\n")
 
-                    review_batch = []
+                batch_count += 1
+
+                # Use COPY for larger batches (more efficient)
+                if batch_count >= COPY_BATCH_SIZE:
+                    buffer.seek(0)
+                    cursor.copy_from(buffer, 'reviews',
+                                   columns=['review_id', 'user_id', 'business_id', 'stars', 'date',
+                                           'text', 'useful', 'funny', 'cool'])
+                    conn.commit()
+                    total_imported += batch_count
+                    batch_count = 0
+                    buffer = StringIO()
 
         # Final batch
-        if review_batch:
-            try:
-                execute_batch(cursor, """
-                    INSERT INTO reviews
-                    (review_id, user_id, business_id, stars, date, text, useful, funny, cool)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (review_id) DO NOTHING
-                """, review_batch)
-                conn.commit()
-            except Exception as e:
-                conn.rollback()
-                skipped += len(review_batch)
+        if batch_count > 0:
+            buffer.seek(0)
+            cursor.copy_from(buffer, 'reviews',
+                           columns=['review_id', 'user_id', 'business_id', 'stars', 'date',
+                                   'text', 'useful', 'funny', 'cool'])
+            conn.commit()
+            total_imported += batch_count
 
         cursor.close()
         conn.close()
 
-        print(f"✅ Reviews imported successfully (skipped {skipped} due to FK constraints)")
+        print(f"✅ Reviews imported successfully ({total_imported:,} reviews)")
 
     except Exception as e:
         conn.rollback()
