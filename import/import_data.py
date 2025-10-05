@@ -426,10 +426,13 @@ def import_reviews(filepath):
                 # Escape text for COPY (handle tabs, newlines, backslashes)
                 text = record['text'].replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
 
+                # Convert stars to integer (handle both int and float values)
+                stars = int(float(record['stars']))
+
                 # Write to buffer as tab-separated values
                 buffer.write(f"{record['review_id']}\t{record['user_id']}\t{record['business_id']}\t"
-                           f"{record['stars']}\t{review_date}\t{text}\t"
-                           f"{record.get('useful', 0)}\t{record.get('funny', 0)}\t{record.get('cool', 0)}\n")
+                           f"{stars}\t{review_date}\t{text}\t"
+                           f"{int(record.get('useful', 0))}\t{int(record.get('funny', 0))}\t{int(record.get('cool', 0))}\n")
 
                 batch_count += 1
 
