@@ -1,0 +1,19 @@
+[project]
+name = "yelp-query-workflow"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Sungchunn",email = "99805001+Sungchunn@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = "^3.10"
+dependencies = [
+    "psycopg2-binary (>=2.9.10,<3.0.0)",
+    "python-dotenv (>=1.1.1,<2.0.0)",
+    "tqdm (>=4.67.1,<5.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
