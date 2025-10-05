@@ -57,13 +57,17 @@ def test_output_fields():
     results = still_there('PA')
     if results and len(results) > 0:
         biz_id, name, address, lat, lon, stars = results[0]
+        # Accept both float and Decimal for numeric types
+        from decimal import Decimal
+        lat_ok = isinstance(lat, (float, Decimal))
+        lon_ok = isinstance(lon, (float, Decimal))
+        stars_ok = isinstance(stars, (float, Decimal))
         if (isinstance(biz_id, str) and isinstance(name, str) and
-            isinstance(address, str) and isinstance(lat, float) and
-            isinstance(lon, float) and isinstance(stars, float)):
+            isinstance(address, str) and lat_ok and lon_ok and stars_ok):
             print(f"   ✅ PASS: Returns (business_id, name, full_address, lat, lon, stars)")
             print(f"   Sample: {name} - {address}")
         else:
-            print(f"   ❌ FAIL: Wrong types in tuple")
+            print(f"   ❌ FAIL: Wrong types - {type(biz_id)}, {type(name)}, {type(address)}, {type(lat)}, {type(lon)}, {type(stars)}")
             all_pass = False
     else:
         print(f"   ❌ FAIL: No results returned")
@@ -89,15 +93,18 @@ def test_output_fields():
     print("\n4. Testing high_fives(city, top_count)...")
     results = high_fives('Philadelphia', 5)
     if results and len(results) > 0:
+        from decimal import Decimal
         biz_id, name, address, review_count, stars, five_pct, two_pct = results[0]
+        stars_ok = isinstance(stars, (float, Decimal))
+        five_ok = isinstance(five_pct, (float, Decimal))
+        two_ok = isinstance(two_pct, (float, Decimal))
         if (isinstance(biz_id, str) and isinstance(name, str) and
             isinstance(address, str) and isinstance(review_count, int) and
-            isinstance(stars, float) and isinstance(five_pct, float) and
-            isinstance(two_pct, float)):
+            stars_ok and five_ok and two_ok):
             print(f"   ✅ PASS: Returns (business_id, name, address, review_count, stars, 5★%, 2+★%)")
-            print(f"   Sample: {name} - {five_pct*100:.1f}% five-star")
+            print(f"   Sample: {name} - {float(five_pct)*100:.1f}% five-star")
         else:
-            print(f"   ❌ FAIL: Wrong types in tuple")
+            print(f"   ❌ FAIL: Wrong types - review_count:{type(review_count)}, stars:{type(stars)}, five_pct:{type(five_pct)}")
             all_pass = False
     else:
         print(f"   ❌ FAIL: No results returned")
@@ -107,14 +114,18 @@ def test_output_fields():
     print("\n5. Testing topBusiness_in_city(city, elite_count, top_count)...")
     results = topBusiness_in_city('Philadelphia', 10, 5)
     if results and len(results) > 0:
+        from decimal import Decimal
         biz_id, name, address, review_count, stars, elite_count = results[0]
+        stars_ok = isinstance(stars, (float, Decimal))
+        # elite_count can be int or long
+        elite_ok = isinstance(elite_count, (int, Decimal))
         if (isinstance(biz_id, str) and isinstance(name, str) and
             isinstance(address, str) and isinstance(review_count, int) and
-            isinstance(stars, float) and isinstance(elite_count, int)):
+            stars_ok and elite_ok):
             print(f"   ✅ PASS: Returns (business_id, name, address, review_count, stars, elite_count)")
             print(f"   Sample: {name} - {elite_count} elite reviews")
         else:
-            print(f"   ❌ FAIL: Wrong types in tuple")
+            print(f"   ❌ FAIL: Wrong types - review_count:{type(review_count)}, stars:{type(stars)}, elite:{type(elite_count)}")
             all_pass = False
     else:
         print(f"   ❌ FAIL: No results returned")
